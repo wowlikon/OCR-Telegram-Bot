@@ -1,0 +1,5 @@
+aiogram>=3.0.0
+pytesseract
+opencv-python-headless
+numpy
+python-dotenv
