@@ -266,6 +266,8 @@ class OCREngine:
                     result = self._recognize_with_method(image, method)
                     if result.text.strip():
                         results.append(result)
+                except RuntimeError as e:
+                    raise e
                 except Exception:
                     continue
 
@@ -279,6 +281,9 @@ class OCREngine:
                 return "Текст не найден или изображение слишком размытое."
 
             return clean_text
+
+        except RuntimeError as e:
+            raise e
 
         except Exception as e:
             return f"Системная ошибка: {str(e)}"
