@@ -77,7 +77,7 @@ async def process_image(message: Message, bot: Bot, file_id: str):
 
             await status_msg.edit_text(text["PROCESSING"])
 
-            result_text = asyncio.to_thread(
+            result_text = await asyncio.to_thread(
                 ocr_service.recognize, file_bytes.getvalue()
             )
 
