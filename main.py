@@ -18,7 +18,6 @@ load_dotenv()
 
 TESSERACT_CMD = os.getenv("TESSERACT_CMD")
 MAX_THREADS = int(os.getenv("MAX_THREADS", 2))
-MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))
 
 router = Router()
 ocr_semaphore = asyncio.Semaphore(MAX_THREADS)
@@ -78,9 +77,8 @@ async def process_image(message: Message, bot: Bot, file_id: str):
 
             await status_msg.edit_text(text["PROCESSING"])
 
-            result_text = await asyncio.wait_for(
-                asyncio.to_thread(ocr_service.recognize, file_bytes.getvalue()),
-                timeout=30.0,
+            result_text = asyncio.to_thread(
+                ocr_service.recognize, file_bytes.getvalue()
             )
 
         if len(result_text) >= 4000:
@@ -92,7 +90,7 @@ async def process_image(message: Message, bot: Bot, file_id: str):
             await message.reply(
                 text["RESULT"] + html.escape(result_text), parse_mode=ParseMode.HTML
             )
-    except asyncio.TimeoutError:
+    except RuntimeError:
         await message.reply(text["TIMEOUT"], parse_mode=ParseMode.HTML)
 
     except Exception as e:

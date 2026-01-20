@@ -201,7 +201,11 @@ class OCREngine:
 
     def _get_confidence(self, image: np.ndarray, config: str) -> Tuple[str, float]:
         data = pytesseract.image_to_data(
-            image, lang=self.langs, config=config, output_type=pytesseract.Output.DICT
+            image,
+            timeout=30,
+            lang=self.langs,
+            config=config,
+            output_type=pytesseract.Output.DICT,
         )
 
         confidences = [int(c) for c in data["conf"] if int(c) > 0]
