@@ -13,29 +13,29 @@ class OCRResult:
 
 
 class OCREngine:
-    def __init__(self, tesseract_cmd: str = None, langs: str = 'rus+eng'):
+    def __init__(self, tesseract_cmd: str | None = None, langs: str = "rus+eng"):
         if tesseract_cmd:
             pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
         self.langs = langs
         self.configs = [
-            r'--oem 3 --psm 6',
-            r'--oem 3 --psm 3',
-            r'--oem 3 --psm 4',
-            r'--oem 1 --psm 6',
+            r"--oem 3 --psm 6",
+            r"--oem 3 --psm 3",
+            r"--oem 3 --psm 4",
+            r"--oem 1 --psm 6",
         ]
 
         self.ocr_corrections = {
-            r'\b0\b': 'О',
-            r'(?<=[А-Яа-яЁё])0(?=[А-Яа-яЁё])': 'о',
-            r'(?<=[А-Яа-яЁё])1(?=[А-Яа-яЁё])': 'л',
-            r'(?<=[a-zA-Z])0(?=[a-zA-Z])': 'o',
-            r'(?<=[a-zA-Z])1(?=[a-zA-Z])': 'l',
-            r'\|': 'I',
-            r',,': '"',
+            r"\b0\b": "О",
+            r"(?<=[А-Яа-яЁё])0(?=[А-Яа-яЁё])": "о",
+            r"(?<=[А-Яа-яЁё])1(?=[А-Яа-яЁё])": "л",
+            r"(?<=[a-zA-Z])0(?=[a-zA-Z])": "o",
+            r"(?<=[a-zA-Z])1(?=[a-zA-Z])": "l",
+            r"\|": "I",
+            r",,": '"',
             r"''": '"',
-            r'«\s*': '«',
-            r'\s*»': '»',
+            r"«\s*": "«",
+            r"\s*»": "»",
         }
 
     def _decode_image(self, image_bytes: bytes) -> Optional[np.ndarray]:
@@ -43,14 +43,20 @@ class OCREngine:
         image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         return image
 
-    def _resize_if_needed(self, image: np.ndarray, min_height: int = 1000) -> np.ndarray:
+    def _resize_if_needed(
+        self, image: np.ndarray, min_height: int = 1000
+    ) -> np.ndarray:
         h, w = image.shape[:2]
         if h < min_height:
             scale = min_height / h
-            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            image = cv2.resize(
+                image, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
+            )
         elif h > 4000:
             scale = 4000 / h
-            image = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+            image = cv2.resize(
+                image, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA
+            )
         return image
 
     def _to_grayscale(self, image: np.ndarray) -> np.ndarray:
@@ -59,7 +65,9 @@ class OCREngine:
         return image
 
     def _denoise(self, image: np.ndarray) -> np.ndarray:
-        return cv2.fastNlMeansDenoising(image, h=10, templateWindowSize=7, searchWindowSize=21)
+        return cv2.fastNlMeansDenoising(
+            image, h=10, templateWindowSize=7, searchWindowSize=21
+        )
 
     def _deskew(self, image: np.ndarray) -> np.ndarray:
         coords = np.column_stack(np.where(image < 128))
@@ -80,16 +88,18 @@ class OCREngine:
         center = (w // 2, h // 2)
         matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
         rotated = cv2.warpAffine(
-            image, matrix, (w, h),
+            image,
+            matrix,
+            (w, h),
             flags=cv2.INTER_CUBIC,
-            borderMode=cv2.BORDER_REPLICATE
+            borderMode=cv2.BORDER_REPLICATE,
         )
         return rotated
 
     def _auto_rotate(self, image: np.ndarray) -> np.ndarray:
         try:
             osd = pytesseract.image_to_osd(image, output_type=pytesseract.Output.DICT)
-            rotation = osd.get('rotate', 0)
+            rotation = osd.get("rotate", 0)
             if rotation == 90:
                 return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
             elif rotation == 180:
@@ -107,11 +117,12 @@ class OCREngine:
 
     def _binarize_adaptive(self, image: np.ndarray) -> np.ndarray:
         return cv2.adaptiveThreshold(
-            image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY, 11, 2
+            image, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
         )
 
-    def _binarize_sauvola(self, image: np.ndarray, window_size: int = 25, k: float = 0.2) -> np.ndarray:
+    def _binarize_sauvola(
+        self, image: np.ndarray, window_size: int = 25, k: float = 0.2
+    ) -> np.ndarray:
         mean = cv2.blur(image, (window_size, window_size))
         mean_sq = cv2.blur(image.astype(np.float32) ** 2, (window_size, window_size))
         std = np.sqrt(np.maximum(mean_sq - mean.astype(np.float32) ** 2, 0))
@@ -136,7 +147,12 @@ class OCREngine:
             )
             for cnt in contours:
                 x, y, cw, ch = cv2.boundingRect(cnt)
-                if x < border or y < border or x + cw > w - border or y + ch > h - border:
+                if (
+                    x < border
+                    or y < border
+                    or x + cw > w - border
+                    or y + ch > h - border
+                ):
                     if cw > w * 0.8 or ch > h * 0.8:
                         cv2.drawContours(image, [cnt], -1, 255, -1)
         return image
@@ -145,11 +161,13 @@ class OCREngine:
         clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
         return clahe.apply(image)
 
-    def _preprocess_pipeline(self, image: np.ndarray, method: str = 'standard') -> np.ndarray:
+    def _preprocess_pipeline(
+        self, image: np.ndarray, method: str = "standard"
+    ) -> np.ndarray:
         image = self._resize_if_needed(image)
         gray = self._to_grayscale(image)
 
-        if method == 'standard':
+        if method == "standard":
             gray = self._enhance_contrast(gray)
             gray = self._denoise(gray)
             gray = self._auto_rotate(gray)
@@ -157,19 +175,19 @@ class OCREngine:
             binary = self._binarize_otsu(gray)
             binary = self._morphology_clean(binary)
 
-        elif method == 'adaptive':
+        elif method == "adaptive":
             gray = self._enhance_contrast(gray)
             gray = self._auto_rotate(gray)
             gray = self._deskew(gray)
             binary = self._binarize_adaptive(gray)
             binary = self._morphology_clean(binary)
 
-        elif method == 'sauvola':
+        elif method == "sauvola":
             gray = self._auto_rotate(gray)
             gray = self._deskew(gray)
             binary = self._binarize_sauvola(gray)
 
-        elif method == 'clean':
+        elif method == "clean":
             gray = self._denoise(gray)
             gray = self._auto_rotate(gray)
             binary = self._binarize_otsu(gray)
@@ -186,7 +204,7 @@ class OCREngine:
             image, lang=self.langs, config=config, output_type=pytesseract.Output.DICT
         )
 
-        confidences = [int(c) for c in data['conf'] if int(c) > 0]
+        confidences = [int(c) for c in data["conf"] if int(c) > 0]
         avg_confidence = sum(confidences) / len(confidences) if confidences else 0
 
         text = pytesseract.image_to_string(image, lang=self.langs, config=config)
@@ -197,26 +215,26 @@ class OCREngine:
         for pattern, replacement in self.ocr_corrections.items():
             text = re.sub(pattern, replacement, text)
 
-        text = re.sub(r'[^\S\n]+', ' ', text)
-        text = re.sub(r' +', ' ', text)
-        text = re.sub(r'\n{3,}', '\n\n', text)
+        text = re.sub(r"[^\S\n]+", " ", text)
+        text = re.sub(r" +", " ", text)
+        text = re.sub(r"\n{3,}", "\n\n", text)
 
         lines = []
-        for line in text.split('\n'):
+        for line in text.split("\n"):
             line = line.strip()
-            if line and not re.match(r'^[\W\d_]+$', line):
+            if line and not re.match(r"^[\W\d_]+$", line):
                 lines.append(line)
 
-        text = '\n'.join(lines)
+        text = "\n".join(lines)
 
-        text = re.sub(r'(\w)-\n(\w)', r'\1\2', text)
+        text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
 
         return text.strip()
 
     def _recognize_with_method(self, image: np.ndarray, method: str) -> OCRResult:
         processed = self._preprocess_pipeline(image, method)
 
-        best_text = ''
+        best_text = ""
         best_confidence = 0
 
         for config in self.configs:
@@ -236,7 +254,7 @@ class OCREngine:
             if image is None:
                 return "Ошибка: не удалось декодировать изображение."
 
-            methods = ['standard', 'adaptive', 'sauvola', 'clean']
+            methods = ["standard", "adaptive", "sauvola", "clean"]
             results: List[OCRResult] = []
 
             for method in methods:
@@ -265,32 +283,36 @@ class OCREngine:
         try:
             image = self._decode_image(image_bytes)
             if image is None:
-                return {'error': 'Не удалось декодировать изображение'}
+                return {"error": "Не удалось декодировать изображение"}
 
-            methods = ['standard', 'adaptive', 'sauvola', 'clean']
+            methods = ["standard", "adaptive", "sauvola", "clean"]
             results = {}
 
             for method in methods:
                 try:
                     result = self._recognize_with_method(image, method)
                     results[method] = {
-                        'text': self._postprocess(result.text),
-                        'confidence': round(result.confidence, 2)
+                        "text": self._postprocess(result.text),
+                        "confidence": round(result.confidence, 2),
                     }
                 except Exception as e:
-                    results[method] = {'error': str(e)}
+                    results[method] = {"error": str(e)}
 
             best_method = max(
-                [(m, r) for m, r in results.items() if 'text' in r and r['text']],
-                key=lambda x: (x[1]['confidence'], len(x[1]['text'])),
-                default=(None, None)
+                [(m, r) for m, r in results.items() if "text" in r and r["text"]],
+                key=lambda x: (x[1]["confidence"], len(x[1]["text"])),
+                default=(None, None),
             )
 
             return {
-                'results': results,
-                'best_method': best_method[0] if best_method[0] else None,
-                'best_text': best_method[1]['text'] if best_method[1] and 'text' in best_method[1] else None
+                "results": results,
+                "best_method": best_method[0] if best_method[0] else None,
+                "best_text": (
+                    best_method[1]["text"]
+                    if best_method[1] and "text" in best_method[1]
+                    else None
+                ),
             }
 
         except Exception as e:
-            return {'error': str(e)}
+            return {"error": str(e)}

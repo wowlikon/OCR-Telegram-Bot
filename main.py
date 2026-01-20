@@ -1,8 +1,10 @@
+import threading
 import asyncio
 import logging
 import sys
 import os
 import io
+import html
 from dotenv import load_dotenv
 
 from aiogram import Bot, Dispatcher, F, Router
@@ -14,58 +16,88 @@ from services.ocr import OCREngine
 
 load_dotenv()
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
 TESSERACT_CMD = os.getenv("TESSERACT_CMD")
-
-if not BOT_TOKEN:
-    logging.error("BOT_TOKEN is not set. Please check your .env file.")
-    sys.exit(1)
+MAX_THREADS = int(os.getenv("MAX_THREADS", 2))
+MAX_FILE_SIZE = int(os.getenv("MAX_FILE_SIZE", 10 * 1024 * 1024))
 
 router = Router()
+ocr_semaphore = asyncio.Semaphore(MAX_THREADS)
 ocr_service = OCREngine(tesseract_cmd=TESSERACT_CMD)
+MESSAGES = {
+    "ru": {
+        "HELLO": "Привет! Я OCR-бот.\nОтправь мне изображение (фото или документ), и я извлеку из него текст.\nЯ понимаю разные языки.",
+        "IN_QUEUE": "Ожидает обработку...",
+        "PROCESSING": "Обрабатываю изображение...",
+        "TOO_LONG": "Текст слишком длинный, отправляю файлом.",
+        "RESULT": "<b>Результат:</b>\n\n",
+        "ERROR": "Ошибка: ",
+        "SEND_IMAGE": "Пожалуйста, отправьте файл изображения.",
+        "TIMEOUT": "Время обработки изображения было слишком долгое. Попробуйте позже.",
+    },
+    "en": {
+        "HELLO": "Hello! I'm OCR-bot.\nSend to me image (photo or document) and i extract text from it.\nI understand multiple languages.",
+        "IN_QUEUE": "Waiting processing...",
+        "PROCESSING": "Processing image...",
+        "TOO_LONG": "Text too long, sending file.",
+        "RESULT": "<b>Result:</b>\n\n",
+        "ERROR": "Error: ",
+        "SEND_IMAGE": "Please, send image file.",
+        "TIMEOUT": "Image processing time is too long. Try later.",
+    },
+}
+
+
+def get_lang_code(message: Message) -> str:
+    user = message.from_user
+    lang = "en"
+    if user and user.language_code:
+        lang = user.language_code
+    return lang
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer(
-        "Привет! Я OCR-бот.\n"
-        "Отправь мне изображение (фото или документ), и я извлеку из него текст.\n"
-        "Я понимаю русский и английский языки."
-    )
+    lang = get_lang_code(message)
+    text = MESSAGES.get(lang, MESSAGES["en"])
+
+    await message.answer(text["HELLO"])
 
 
 async def process_image(message: Message, bot: Bot, file_id: str):
     """Common logic for processing images from photos and documents."""
-    status_msg = await message.reply("Обрабатываю изображение...")
+    lang = get_lang_code(message)
+    text = MESSAGES.get(lang, MESSAGES["en"])
+
+    status_msg = await message.answer(text["IN_QUEUE"])
 
     try:
-        file_info = await bot.get_file(file_id)
-        file_bytes = io.BytesIO()
-        await bot.download_file(file_info.file_path, file_bytes)
+        async with ocr_semaphore:
+            file_info = await bot.get_file(file_id)
+            file_bytes = io.BytesIO()
+            await bot.download_file(file_info.file_path, file_bytes)
 
-        result_text = await asyncio.to_thread(
-            ocr_service.recognize,
-            file_bytes.getvalue()
-        )
+            await status_msg.edit_text(text["PROCESSING"])
 
-        if len(result_text) > 4000:
+            result_text = await asyncio.wait_for(
+                asyncio.to_thread(ocr_service.recognize, file_bytes.getvalue()),
+                timeout=30.0,
+            )
+
+        if len(result_text) >= 4000:
             result_file = BufferedInputFile(
-                result_text.encode('utf-8'),
-                filename="ocr_result.txt"
+                result_text.encode("utf-8"), filename="ocr_result.txt"
             )
-            await message.reply_document(
-                result_file,
-                caption="Текст слишком длинный, отправляю файлом."
-            )
+            await message.reply_document(result_file, caption=text["TOO_LONG"])
         else:
             await message.reply(
-                f"**Результат:**\n\n{result_text}",
-                parse_mode=ParseMode.MARKDOWN
+                text["RESULT"] + html.escape(result_text), parse_mode=ParseMode.HTML
             )
+    except asyncio.TimeoutError:
+        await message.reply(text["TIMEOUT"], parse_mode=ParseMode.HTML)
 
     except Exception as e:
-        logging.exception("Error processing image")
-        await message.reply(f"Ошибка: {e}")
+        logging.exception(f"Error processing image {e}")
+        await message.reply(text["ERROR"] + str(e))
     finally:
         await status_msg.delete()
 
@@ -78,15 +110,27 @@ async def handle_photo(message: Message, bot: Bot):
 
 @router.message(F.content_type == ContentType.DOCUMENT)
 async def handle_document(message: Message, bot: Bot):
-    if not message.document.mime_type or not message.document.mime_type.startswith('image/'):
-        await message.reply("Пожалуйста, отправьте файл изображения.")
+    lang = get_lang_code(message)
+    text = MESSAGES.get(lang, MESSAGES["en"])
+
+    if not message.document.mime_type or not message.document.mime_type.startswith(
+        "image/"
+    ):
+        await message.reply(text["SEND_IMAGE"])
         return
 
     await process_image(message, bot, message.document.file_id)
 
 
 async def main():
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
     logging.basicConfig(level=logging.INFO)
+
+    if not BOT_TOKEN:
+        logging.error("BOT_TOKEN is not set. Please check your .env file.")
+        sys.exit(1)
+        return
+
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
